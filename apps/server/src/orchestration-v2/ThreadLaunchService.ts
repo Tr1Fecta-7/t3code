@@ -45,12 +45,14 @@ import {
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
+import * as WorkspaceWorktrees from "../git/WorkspaceWorktrees.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -269,6 +271,8 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const workspaceWorktrees = yield* WorkspaceWorktrees.WorkspaceWorktrees;
+  const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -467,7 +471,8 @@ const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(project)) return false;
     // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
-    return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
+    // A multi-repo workspace folder is not a repository but still gets a worktree per repository.
+    return yield* checkpointStore.isCheckpointable(project.value.workspaceRoot).pipe(
       Effect.map((isRepository) => !isRepository),
       Effect.orElseSucceed(() => false),
     );
@@ -638,18 +643,52 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      if (input.workspaceStrategy.type === "worktree") {
-        if (runId !== null) {
-          yield* threads
-            .dispatch({
-              type: "prepared-run.progress",
-              commandId: CommandId.make(`${input.commandId}:progress:worktree`),
-              threadId,
-              runId,
-              phase: "worktree",
-            })
-            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
-        }
+      const reportWorktreePhase =
+        runId === null
+          ? Effect.void
+          : threads
+              .dispatch({
+                type: "prepared-run.progress",
+                commandId: CommandId.make(`${input.commandId}:progress:worktree`),
+                threadId,
+                runId,
+                phase: "worktree",
+              })
+              .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+      const repositories =
+        input.workspaceStrategy.type === "worktree"
+          ? yield* workspaceRepositories.list(project.workspaceRoot)
+          : [];
+      if (input.workspaceStrategy.type === "worktree" && repositories.length > 0) {
+        yield* reportWorktreePhase;
+        // Each repository starts from its own default branch; the strategy's base ref names a
+        // branch of one repository and does not apply.
+        const startFromOrigin = input.workspaceStrategy.startFromOrigin === true;
+        yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
+        yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        const created = yield* workspaceWorktrees
+          .create(
+            {
+              workspaceRoot: project.workspaceRoot,
+              repositories,
+              branch: branch!,
+              startFromOrigin,
+            },
+            {
+              onContainerClaimed: (path) =>
+                Effect.sync(() => {
+                  createdWorktreePath = path;
+                }),
+            },
+          )
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        worktreePath = created.path;
+        branch = created.branch;
+        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+      } else if (input.workspaceStrategy.type === "worktree") {
+        yield* reportWorktreePhase;
         const requestedBaseRef = input.workspaceStrategy.baseRef;
         let startRef = requestedBaseRef;
         let baseRefName = requestedBaseRef;
@@ -845,22 +884,31 @@ const make = Effect.gen(function* () {
         const worktreeCwd = worktreePath;
         branchRename = yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git
-              .renameBranch({
-                cwd: worktreeCwd,
-                oldBranch,
-                newBranch,
-                ...(exactName ? { exactName: true } : {}),
-              })
-              .pipe(
-                // A cancel must see the renamed branch, or its cleanup deletes the old name.
-                Effect.tap((renamed) =>
-                  Effect.sync(() => {
-                    createdBranch = renamed.branch;
-                  }),
-                ),
-                Effect.uninterruptible,
-              ),
+            repositories.length > 0
+              ? workspaceWorktrees
+                  .renameBranch({
+                    path: worktreeCwd,
+                    oldBranch,
+                    newBranch,
+                    ...(exactName ? { exactName: true } : {}),
+                  })
+                  .pipe(Effect.uninterruptible)
+              : git
+                  .renameBranch({
+                    cwd: worktreeCwd,
+                    oldBranch,
+                    newBranch,
+                    ...(exactName ? { exactName: true } : {}),
+                  })
+                  .pipe(
+                    // A cancel must see the renamed branch, or its cleanup deletes the old name.
+                    Effect.tap((renamed) =>
+                      Effect.sync(() => {
+                        createdBranch = renamed.branch;
+                      }),
+                    ),
+                    Effect.uninterruptible,
+                  ),
           ),
           Effect.flatMap((renamed) =>
             Effect.gen(function* () {
