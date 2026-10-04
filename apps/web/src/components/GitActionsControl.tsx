@@ -140,6 +140,11 @@ interface GitActionsControlProps {
   showChanges?: boolean;
   onOpenChanges?: () => void;
   workspaceMutationId?: string | null;
+  /**
+   * Keep the thread's branch in step with this checkout. Off for one repository of a
+   * multi-repo workspace, whose branch is not the thread's.
+   */
+  syncThreadBranch?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -923,6 +928,7 @@ export default function GitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
+  syncThreadBranch = true,
 }: GitActionsControlProps) {
   const progressLabelId = useId();
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -974,7 +980,7 @@ export default function GitActionsControl({
     inlineSuccess?.scopeKey === successScopeKey && !inlineSuccessExpired ? inlineSuccess : null;
 
   const persistThreadBranchSync = (branch: string | null, manualSelection = false) => {
-    if (!activeThreadRef) {
+    if (!activeThreadRef || !syncThreadBranch) {
       return;
     }
 

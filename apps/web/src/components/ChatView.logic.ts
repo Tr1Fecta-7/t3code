@@ -1347,6 +1347,7 @@ export function planComposerTurn(input: {
   readonly activeThreadBranch: string | null;
   /** The server launches a No project worktree request at its root, so it needs no base. */
   readonly isScratchProject: boolean;
+  readonly isMultiRepoWorkspace: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
@@ -1370,12 +1371,19 @@ export function planComposerTurn(input: {
     input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
       ? "queue"
       : input.dispatchMode;
+  // The server starts each repository of a multi-repo workspace from its own default
+  // branch, so there is no base branch to pick.
+  const baseBranchForWorktree = shouldCreateWorktree
+    ? input.isMultiRepoWorkspace
+      ? (input.activeThreadBranch ?? "HEAD")
+      : input.activeThreadBranch
+    : null;
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch:
-      shouldCreateWorktree && !input.activeThreadBranch && !input.isScratchProject,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+      shouldCreateWorktree && !baseBranchForWorktree && !input.isScratchProject,
+    baseBranchForWorktree,
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || (input.sendQueuesBehindSetup && dispatchMode !== "steer")
