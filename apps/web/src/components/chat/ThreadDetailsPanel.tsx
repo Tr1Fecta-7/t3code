@@ -5,7 +5,9 @@ import type {
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
+  VcsRepository,
 } from "@t3tools/contracts";
+import { joinWorkspaceRepositoryPath } from "@t3tools/shared/path";
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -69,6 +71,8 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   workspaceMutationId: string | null;
   isGitRepo: boolean;
+  /** Repositories of a multi-repo workspace; each gets its own source control. */
+  workspaceRepositories: ReadonlyArray<VcsRepository>;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -82,7 +86,8 @@ interface ThreadDetailsPanelProps extends Pick<
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
-  onOpenChanges?: () => void;
+  /** Opens the diff panel, on the given repository in a multi-repo workspace. */
+  onOpenChanges?: (repositoryPath?: string) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -165,17 +170,25 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     >
       {(density) => {
         // Section flags follow the rows that will render, so no empty section steals the divider rule.
+        // A multi-repo workspace gets a section per repository instead of the branch and git rows.
+        const repositories =
+          offersGit &&
+          props.activeProjectName !== undefined &&
+          props.workspaceRepositories.length > 0 &&
+          (visible.gitActions || visible.changes);
         const show = {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
-          branch: offersGit && props.isGitRepo && visible.branch,
+          branch: !repositories && offersGit && props.isGitRepo && visible.branch,
           // Without a branch selector, linked pull requests still need somewhere to show.
           pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
           git:
+            !repositories &&
             offersGit &&
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
+          repositories,
         };
         return (
           <>
@@ -230,6 +243,31 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
+              {show.repositories && props.gitCwd
+                ? props.workspaceRepositories.map((repository) => (
+                    <ThreadDetailsSection
+                      key={repository.relativePath}
+                      headingId={`thread-details-repository-${repository.relativePath.replaceAll("/", "-")}`}
+                      title={repository.name}
+                      separated={density === "full"}
+                    >
+                      <GitActionsControl
+                        compact={density !== "full"}
+                        showActions={visible.gitActions}
+                        showChanges={visible.changes}
+                        gitCwd={joinWorkspaceRepositoryPath(props.gitCwd!, repository.relativePath)}
+                        workspaceMutationId={props.workspaceMutationId}
+                        activeThreadRef={activeThreadRef}
+                        syncThreadBranch={false}
+                        {...(props.draftId ? { draftId: props.draftId } : {})}
+                        {...(props.onOpenChanges
+                          ? { onOpenChanges: () => props.onOpenChanges!(repository.relativePath) }
+                          : {})}
+                      />
+                    </ThreadDetailsSection>
+                  ))
+                : null}
+
               {show.branch || show.pullRequests || show.git ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
@@ -257,7 +295,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(props.draftId ? { draftId: props.draftId } : {})}
-                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                        {...(props.onOpenChanges
+                          ? { onOpenChanges: () => props.onOpenChanges!() }
+                          : {})}
                       />
                     ) : null}
                   </div>

@@ -5,12 +5,14 @@ import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { joinWorkspaceRepositoryPath } from "@t3tools/shared/path";
 
 import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -126,34 +128,59 @@ export const layerObserver = Layer.effect(
           ),
         ),
     );
+    const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
+    const refreshStatus = (input: {
+      readonly cwd: string;
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+    }) =>
+      Effect.gen(function* () {
+        const local = yield* vcsStatus.refreshLocalStatus(input.cwd);
+        if (local.refName === null || local.isDefaultRef) return;
+        const thread = yield* projections.getThreadShell(input.threadId);
+        if (!thread || thread.branch !== local.refName) return;
+        if (thread.activeRunId !== null && thread.activeRunId !== input.runId) return;
+        yield* vcsStatus.refreshPullRequestStatus(input.cwd).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to refresh pull request status after run completion", {
+              threadId: input.threadId,
+              cwd: input.cwd,
+              detail: error.message,
+            }),
+          ),
+          // The forge CLI can take minutes, so the next turn must not wait for it. A newer
+          // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
+          FiberMap.run(pullRequestLookups, input.cwd),
+        );
+      });
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
-          const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
-            { concurrency: "unbounded" },
+          // A multi-repo workspace folder is not a repository; its repositories hold the status.
+          const repositories = yield* workspaceRepositories.list(cwd);
+          const statusCwds =
+            repositories.length === 0
+              ? [cwd]
+              : repositories.map((repository) =>
+                  joinWorkspaceRepositoryPath(cwd, repository.relativePath),
+                );
+          yield* Effect.all(
+            [
+              workspaceEntries.refresh(cwd),
+              Effect.forEach(
+                statusCwds,
+                (statusCwd) => refreshStatus({ cwd: statusCwd, threadId, runId }),
+                { concurrency: "unbounded", discard: true },
+              ),
+            ],
+            { concurrency: "unbounded", discard: true },
           );
           const thread = yield* projections.getThreadShell(threadId);
           if (!thread) return;
           // Forge discovery probes can take seconds; like the PR lookup, the next turn must not wait.
           yield* refreshMissingRepositoryIdentity(thread.projectId).pipe(
             FiberMap.run(identityRefreshes, thread.projectId),
-          );
-          if (local.refName === null || local.isDefaultRef) return;
-          if (thread.branch !== local.refName) return;
-          if (thread.activeRunId !== null && thread.activeRunId !== runId) return;
-          // The forge CLI can take minutes, so the next turn must not wait for it. A newer
-          // turn's lookup replaces a running one instead of queueing behind the cwd's lock.
-          yield* vcsStatus.refreshPullRequestStatus(cwd).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("failed to refresh pull request status after run completion", {
-                threadId,
-                cwd,
-                detail: error.message,
-              }),
-            ),
-            FiberMap.run(pullRequestLookups, cwd),
           );
         },
         (effect, { cwd }) =>

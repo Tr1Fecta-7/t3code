@@ -11,6 +11,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -54,6 +55,7 @@ it.effect.each([
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({ list: () => Effect.succeed([]) }),
         Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshLocalStatus: () =>

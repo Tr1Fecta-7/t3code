@@ -148,6 +148,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         environmentId={threadRef.environmentId}
         threadId={threadRef.threadId}
         projectId={ProjectId.make("project")}
+        workspaceRepositories={[]}
         composerDraftTarget={threadRef}
         worktreePath={state.folder}
         isServerThread

@@ -26,6 +26,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
@@ -122,6 +123,9 @@ it.effect.each(
       Layer.mergeAll(
         layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({
+          list: () => Effect.succeed([]),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
         }),
@@ -170,6 +174,7 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
       Layer.mergeAll(
         layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({ list: () => Effect.succeed([]) }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
         }),
@@ -221,6 +226,7 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
       Layer.mergeAll(
         layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({ list: () => Effect.succeed([]) }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
         }),
@@ -285,6 +291,7 @@ const layerIdentityRefresh = <R>(
           ),
         ),
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({ list: () => Effect.succeed([]) }),
         Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshLocalStatus: () =>
@@ -395,4 +402,55 @@ it.effect("returns from the post-turn refresh while the identity resolver is sti
     const change = yield* PubSub.take(changes);
     assert.strictEqual(change.enrichment.repositoryIdentity?.canonicalKey, identity.canonicalKey);
   }).pipe(Effect.scoped, Effect.provide(layerIdentityRefresh(workspaceRoot, resolver)));
+});
+
+it.effect("refreshes every repository of a multi-repo workspace after a run", () => {
+  const refreshed: string[] = [];
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProject,
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({
+          list: () =>
+            Effect.succeed([
+              { relativePath: "api", name: "api" },
+              { relativePath: "web", name: "web" },
+            ]),
+        }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: (cwd) =>
+            Effect.sync(() => {
+              refreshed.push(cwd);
+              return {
+                isRepo: true,
+                hasPrimaryRemote: false,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: true,
+                workingTree: { files: [], insertions: 1, deletions: 0 },
+              };
+            }),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* observer.refresh({
+      cwd: "/worktrees/shop/feature",
+      threadId: ThreadId.make("thread-multi-repo"),
+      runId: RunId.make("run-multi-repo"),
+    });
+    assert.deepEqual(refreshed.toSorted(), [
+      "/worktrees/shop/feature/api",
+      "/worktrees/shop/feature/web",
+    ]);
+  }).pipe(Effect.provide(layer));
 });
