@@ -6,6 +6,7 @@ import { describe, it } from "vite-plus/test";
 import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+  buildCodexRepositoriesContext,
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexAdditionalContext", () => {
@@ -76,6 +77,16 @@ describe("Codex device context", () => {
     NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+  });
+});
+
+describe("buildCodexRepositoriesContext", () => {
+  it("sends only the repository list, and nothing outside a multi-repo workspace", () => {
+    const context = buildCodexRepositoriesContext([{ relativePath: "api", name: "api" }]);
+    NodeAssert.deepStrictEqual(Object.keys(context ?? {}), ["t3_code_repositories"]);
+    NodeAssert.match(context!.t3_code_repositories!.value, /^<workspace_repositories>/);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext([]), undefined);
+    NodeAssert.strictEqual(buildCodexRepositoriesContext(undefined), undefined);
   });
 });
 

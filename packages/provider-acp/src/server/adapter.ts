@@ -8486,6 +8486,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             pullRequestLinking:
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
+            repositories: turnInput.runtimePolicy.repositories,
           });
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =

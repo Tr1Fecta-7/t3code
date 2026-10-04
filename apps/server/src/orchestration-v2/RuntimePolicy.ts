@@ -8,6 +8,7 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
@@ -143,6 +145,7 @@ export const layerFromProjectStore: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ServerSettings.ServerSettingsService
+  | WorkspaceRepositories.WorkspaceRepositories
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
@@ -151,6 +154,13 @@ export const layerFromProjectStore: Layer.Layer<
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
+    const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
+    // Resolve runs inside command decisions, so a turn's repeated resolves must not rescan the disk.
+    const repositoriesByCwd = yield* Cache.make({
+      capacity: 256,
+      timeToLive: "5 seconds",
+      lookup: workspaceRepositories.list,
+    });
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         yield* refuseAboveCeiling(managedPolicy, input.thread);
@@ -184,11 +194,13 @@ export const layerFromProjectStore: Layer.Layer<
               }),
             ),
           ));
+        const repositories = yield* Cache.get(repositoriesByCwd, cwd);
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
+          ...(repositories.length === 0 ? {} : { repositories }),
         });
       }),
     });
