@@ -43,6 +43,7 @@ import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
+import * as WorkspaceRepositories from "../../workspace/WorkspaceRepositories.ts";
 import {
   makeGrokAcpAdapterFlavor,
   makeGrokAdapterV2,
@@ -345,6 +346,11 @@ describe("Grok launch permission mode", () => {
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
                 get: () => Effect.die("the thread has a worktree"),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(WorkspaceRepositories.WorkspaceRepositories)({
+                list: () => Effect.succeed([]),
               }),
             ),
             Layer.provide(
