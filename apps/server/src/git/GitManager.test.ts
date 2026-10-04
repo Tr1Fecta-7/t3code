@@ -56,6 +56,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "./WorkspaceWorktrees.ts";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
@@ -801,6 +802,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             Layer.provide(
               GitWorkflowService.layer.pipe(
                 Layer.provide(Layer.succeed(GitManager.GitManager, manager)),
+                Layer.provide(
+                  Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+                    isContainer: () => Effect.succeed(false),
+                  }),
+                ),
                 Layer.provide(
                   VcsDriverRegistry.layer.pipe(
                     Layer.provide(VcsProjectConfig.layer),
@@ -4940,6 +4946,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   Effect.andThen(git.createRef(input)),
                 ),
             }),
+            Effect.provide(
+              Layer.mock(WorkspaceWorktrees.WorkspaceWorktrees)({
+                isContainer: () => Effect.succeed(false),
+              }),
+            ),
           ),
         );
         const preparing = yield* Effect.forkChild(

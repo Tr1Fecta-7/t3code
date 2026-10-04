@@ -58,6 +58,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as WorkspaceWorktrees from "../git/WorkspaceWorktrees.ts";
 import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
@@ -290,6 +291,8 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerCommandReceiptStoreProvided,
       layerEventSink,
       IdAllocator.layer,
+      WorkspaceWorktrees.layer,
+      WorkspaceRepositories.layer,
     ),
   ),
 );
