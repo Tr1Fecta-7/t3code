@@ -288,6 +288,7 @@ export const layer: Layer.Layer<
             .captureCheckpoint({
               cwd: input.scope.cwd,
               checkpointRef,
+              missingOnly: true,
             })
             .pipe(
               Effect.timeout(BASELINE_CAPTURE_BUDGET),
