@@ -99,14 +99,19 @@ export function resolveProjectGroupingMode(
 }
 
 function deriveRepositoryScopedKey(
-  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+  project: Pick<
+    EnvironmentProject,
+    "workspaceRoot" | "repositoryIdentity" | "workspaceGroupingKey"
+  >,
   groupingMode: SidebarProjectGroupingMode,
 ): string | null {
   const canonicalKey = project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity)
     : null;
   if (!canonicalKey) {
-    return null;
+    // A multi-repo workspace folder has no repository of its own. Its key already names the
+    // whole set of repositories, so it groups the same way in both repository modes.
+    return project.workspaceGroupingKey?.trim() || null;
   }
 
   if (groupingMode === "repository") {
@@ -126,7 +131,7 @@ function deriveRepositoryScopedKey(
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "workspaceGroupingKey"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
@@ -147,7 +152,7 @@ export function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "workspaceGroupingKey"
   >,
   settings: ProjectGroupingSettings,
 ): string {

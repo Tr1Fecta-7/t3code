@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
+import { RepositoryIdentity, ThreadEnvMode, WorkspaceGroupingKey } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, ReceivedProjectIcon } from "./project.ts";
 
@@ -11,6 +11,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  workspaceGroupingKey: Schema.optional(Schema.NullOr(WorkspaceGroupingKey)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.

@@ -318,3 +318,78 @@ describe("buildProjectGroups", () => {
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
   });
 });
+
+describe("buildProjectGroups with multi-repo workspace folders", () => {
+  const laptop = EnvironmentId.make("laptop");
+  const desktop = EnvironmentId.make("desktop");
+  const workspaceKey = "workspace:github.com/acme/api+github.com/acme/web";
+
+  function makeWorkspace(
+    id: string,
+    environment: EnvironmentId,
+    key: string | null,
+  ): EnvironmentProject {
+    return makeProject(id, "/home/me/work", {
+      environmentId: environment,
+      repositoryIdentity: null,
+      workspaceGroupingKey: key,
+    });
+  }
+
+  it("groups the same workspace folder across environments in both repository modes", () => {
+    const projects = [
+      makeWorkspace("laptop-work", laptop, workspaceKey),
+      makeWorkspace("desktop-work", desktop, workspaceKey),
+    ];
+
+    for (const mode of ["repository", "repository_path"] as const) {
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.key).toBe(workspaceKey);
+      expect(groups[0]?.members.map((member) => member.project.environmentId)).toEqual([
+        laptop,
+        desktop,
+      ]);
+    }
+  });
+
+  it("keeps workspaces holding different repositories apart", () => {
+    const projects = [
+      makeWorkspace("laptop-work", laptop, workspaceKey),
+      makeWorkspace("desktop-work", desktop, "workspace:github.com/acme/api"),
+    ];
+
+    expect(buildProjectGroups({ projects, settings: settings("repository") })).toHaveLength(2);
+  });
+
+  it("keeps workspace folders apart in separate mode and without a key", () => {
+    const keyed = [
+      makeWorkspace("laptop-work", laptop, workspaceKey),
+      makeWorkspace("desktop-work", desktop, workspaceKey),
+    ];
+    expect(buildProjectGroups({ projects: keyed, settings: settings("separate") })).toHaveLength(2);
+
+    const unkeyed = [
+      makeWorkspace("laptop-work", laptop, null),
+      makeWorkspace("desktop-work", desktop, null),
+    ];
+    expect(
+      buildProjectGroups({ projects: unkeyed, settings: settings("repository") }),
+    ).toHaveLength(2);
+  });
+
+  it("prefers a repository identity over a workspace key", () => {
+    const projects = [
+      makeProject("repo", "/home/me/work", {
+        environmentId: laptop,
+        workspaceGroupingKey: workspaceKey,
+      }),
+      makeWorkspace("desktop-work", desktop, workspaceKey),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+    expect(groups.map((group) => group.key).toSorted()).toEqual(
+      ["github.com/t3tools/t3code", workspaceKey].toSorted(),
+    );
+  });
+});

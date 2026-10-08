@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -9,6 +10,7 @@ import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -485,4 +487,79 @@ it.effect(
         assert.equal(yield* Ref.get(faviconScans), 1);
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
+);
+
+it.effect("gives a multi-repo workspace folder a key built from its repositories", () =>
+  Effect.gen(function* () {
+    const remoteIdentity = (workspaceRoot: string, canonicalKey: string): RepositoryIdentity => ({
+      canonicalKey,
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl: `https://${canonicalKey}` },
+      rootPath: workspaceRoot,
+    });
+    const identities: Record<string, RepositoryIdentity> = {
+      "/work/api": remoteIdentity("/work/api", "github.com/acme/api"),
+      "/work/web": remoteIdentity("/work/web", "github.com/acme/web"),
+      "/repo": remoteIdentity("/repo", "github.com/acme/repo"),
+    };
+    const layerMetadata = Layer.mergeAll(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) => Effect.succeed(identities[workspaceRoot] ?? null),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: () => Effect.succeed(null),
+      }),
+      Layer.succeed(WorkspaceRepositories.WorkspaceRepositories, {
+        // Unsorted on purpose: the key must not depend on discovery order.
+        list: (cwd) =>
+          Effect.succeed(
+            cwd === "/work"
+              ? [
+                  { relativePath: "web", name: "web" },
+                  { relativePath: "api", name: "api" },
+                  { relativePath: "no-remote", name: "no-remote" },
+                ]
+              : [],
+          ),
+        describe: () => Effect.succeed({ repositories: [], listedFolders: null }),
+      }),
+      NodePath.layer,
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      for (const root of ["/work", "/repo", "/empty"]) yield* service.request(root);
+
+      const workspace = yield* waitForAvailable(
+        service,
+        "/work",
+        (value) => value.repositoryIdentityResolved,
+      );
+      assert.isNull(workspace.repositoryIdentity);
+      assert.equal(
+        workspace.workspaceGroupingKey,
+        "workspace:github.com/acme/api+github.com/acme/web",
+      );
+
+      const repository = yield* waitForAvailable(
+        service,
+        "/repo",
+        (value) => value.repositoryIdentityResolved,
+      );
+      assert.equal(repository.repositoryIdentity?.canonicalKey, "github.com/acme/repo");
+      assert.isNull(repository.workspaceGroupingKey);
+
+      const empty = yield* waitForAvailable(
+        service,
+        "/empty",
+        (value) => value.repositoryIdentityResolved,
+      );
+      assert.isNull(empty.workspaceGroupingKey);
+    }).pipe(
+      Effect.provide(
+        Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make()).pipe(
+          Layer.provide(layerMetadata),
+        ),
+      ),
+    );
+  }),
 );

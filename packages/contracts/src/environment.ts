@@ -258,6 +258,15 @@ export const RepositoryIdentity = Schema.Struct({
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
 
+/**
+ * Grouping key for a project folder that is not a repository but holds several (a multi-repo
+ * workspace). Built from its repositories' grouping keys, so the same set of repositories groups
+ * across environments. Grouping only: it never names a repository and never reaches pull request
+ * or hosting features, which keep reading `repositoryIdentity`.
+ */
+export const WorkspaceGroupingKey = TrimmedNonEmptyString;
+export type WorkspaceGroupingKey = typeof WorkspaceGroupingKey.Type;
+
 /** Key clients group checkouts by: a fork's own remote, otherwise the canonical repository. */
 export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
   return identity.origin?.canonicalKey ?? identity.canonicalKey;

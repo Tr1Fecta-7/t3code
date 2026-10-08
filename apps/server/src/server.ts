@@ -622,7 +622,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layer))),
   Layer.provideMerge(layerWorkspace),
-  Layer.provideMerge(ProjectEnrichmentService.layer),
+  // Enrichment keys multi-repo workspace folders; layerWorkspace above does not reach it.
+  Layer.provideMerge(
+    ProjectEnrichmentService.layer.pipe(Layer.provide(WorkspaceRepositories.layer)),
+  ),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
