@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { repositoryGroupingKeyOf, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -7,12 +7,14 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
@@ -28,6 +30,8 @@ const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
+  /** Grouping key for a multi-repo workspace folder; null when the folder is a repository. */
+  readonly workspaceGroupingKey: string | null;
   readonly faviconPath: string | null;
   /** True when identity resolution completed successfully, including cached null. */
   readonly repositoryIdentityResolved: boolean;
@@ -98,6 +102,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 ) {
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  // Optional so hosts and tests without workspace discovery keep working; they get no key.
+  const workspaceRepositories = yield* Effect.serviceOption(
+    WorkspaceRepositories.WorkspaceRepositories,
+  );
+  const pathService = yield* Effect.serviceOption(Path.Path);
   const cacheCapacity = Math.max(1, options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY);
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
@@ -114,6 +123,26 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         onSuccess: (result) => (Exit.isSuccess(result) ? successTtl : failureTtl),
       }),
     },
+  );
+  // A folder that is not a repository but holds several gets a key from its repositories'
+  // grouping keys, so the same set of repositories groups across environments.
+  const resolveWorkspaceGroupingKey = Effect.fn(
+    "ProjectEnrichmentService.resolveWorkspaceGroupingKey",
+  )(function* (workspaceRoot: string) {
+    if (Option.isNone(workspaceRepositories) || Option.isNone(pathService)) return null;
+    const repositories = yield* workspaceRepositories.value.list(workspaceRoot);
+    const keys = new Set<string>();
+    for (const repository of repositories) {
+      const identity = yield* repositoryIdentityResolver.resolve(
+        pathService.value.join(workspaceRoot, repository.relativePath),
+      );
+      if (identity !== null) keys.add(repositoryGroupingKeyOf(identity));
+    }
+    return keys.size === 0 ? null : `workspace:${[...keys].toSorted().join("+")}`;
+  });
+  const workspaceGroupingKeyCache = yield* Cache.makeWith(
+    (workspaceRoot: string) => resolveWorkspaceGroupingKey(workspaceRoot),
+    { capacity: cacheCapacity, timeToLive: () => successTtl },
   );
   const faviconCache = yield* Cache.makeWith(
     (workspaceRoot: string) => Effect.exit(faviconResolver.resolvePath(workspaceRoot)),
@@ -176,11 +205,17 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
+      const resolvedIdentity = availableValue(Option.some(repositoryIdentity));
+      const workspaceGroupingKey =
+        repositoryIdentityResolved && resolvedIdentity === null
+          ? yield* Cache.get(workspaceGroupingKeyCache, workspaceRoot)
+          : null;
       yield* PubSub.publish(changes, {
         workspaceRoot,
         repositoryIdentityResolved,
         enrichment: {
-          repositoryIdentity: availableValue(Option.some(repositoryIdentity)),
+          repositoryIdentity: resolvedIdentity,
+          workspaceGroupingKey,
           faviconPath: availableValue(faviconPath),
           repositoryIdentityResolved,
         },
@@ -242,15 +277,17 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const peek: ProjectEnrichmentService["Service"]["peek"] = Effect.fn(
     "ProjectEnrichmentService.peek",
   )(function* (workspaceRoot) {
-    const [repositoryIdentity, faviconPath] = yield* Effect.all(
+    const [repositoryIdentity, workspaceGroupingKey, faviconPath] = yield* Effect.all(
       [
         Cache.getSuccess(repositoryIdentityCache, workspaceRoot),
+        Cache.getSuccess(workspaceGroupingKeyCache, workspaceRoot),
         Cache.getSuccess(faviconCache, workspaceRoot),
       ] as const,
       { concurrency: "unbounded" },
     );
     return {
       repositoryIdentity: availableValue(repositoryIdentity),
+      workspaceGroupingKey: Option.getOrNull(workspaceGroupingKey),
       faviconPath: availableValue(faviconPath),
       repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
     };
@@ -291,6 +328,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
+            Cache.invalidate(workspaceGroupingKeyCache, workspaceRoot),
             Cache.invalidate(faviconCache, workspaceRoot),
           ],
           { concurrency: "unbounded", discard: true },

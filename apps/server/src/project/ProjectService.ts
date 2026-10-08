@@ -166,6 +166,7 @@ export const make = Effect.gen(function* () {
     title: row.title,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
+    workspaceGroupingKey: enrichment?.workspaceGroupingKey ?? null,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
@@ -510,6 +511,7 @@ export const make = Effect.gen(function* () {
       Effect.map((enrichment) => ({
         ...shell,
         repositoryIdentity: enrichment.repositoryIdentity,
+        workspaceGroupingKey: enrichment.workspaceGroupingKey,
       })),
     );
 

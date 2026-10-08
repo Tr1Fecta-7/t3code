@@ -115,6 +115,7 @@ const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink
       peek: () =>
         Effect.succeed({
           repositoryIdentity: null,
+          workspaceGroupingKey: null,
           faviconPath: null,
           repositoryIdentityResolved: false,
         }),
@@ -122,6 +123,7 @@ const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink
       getAvailable: () =>
         Effect.succeed({
           repositoryIdentity: null,
+          workspaceGroupingKey: null,
           faviconPath: null,
           repositoryIdentityResolved: false,
         }),

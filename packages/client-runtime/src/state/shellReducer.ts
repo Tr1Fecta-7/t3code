@@ -57,14 +57,16 @@ function retainRepositoryIdentity(
   previous: OrchestrationProjectShell | undefined,
   next: OrchestrationProjectShell,
 ): OrchestrationProjectShell {
-  if (
-    next.repositoryIdentity == null &&
-    previous?.repositoryIdentity != null &&
-    previous.workspaceRoot === next.workspaceRoot
-  ) {
-    return { ...next, repositoryIdentity: previous.repositoryIdentity };
+  if (previous === undefined || previous.workspaceRoot !== next.workspaceRoot) return next;
+  let retained = next;
+  if (next.repositoryIdentity == null && previous.repositoryIdentity != null) {
+    retained = { ...retained, repositoryIdentity: previous.repositoryIdentity };
   }
-  return next;
+  // Same async enrichment as the identity, so it is kept for the same reason.
+  if (next.workspaceGroupingKey == null && previous.workspaceGroupingKey != null) {
+    retained = { ...retained, workspaceGroupingKey: previous.workspaceGroupingKey };
+  }
+  return retained;
 }
 
 export interface MergeShellSnapshotOptions {
@@ -109,12 +111,13 @@ export function mergeShellSnapshotProjects(
           return project;
         }
         if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+          return {
+            ...project,
+            repositoryIdentity: candidate.repositoryIdentity,
+            workspaceGroupingKey: candidate.workspaceGroupingKey,
+          };
         }
-        if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
-        }
-        return project;
+        return retainRepositoryIdentity(candidate, project);
       }),
     };
   }
